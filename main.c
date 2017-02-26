@@ -32,20 +32,37 @@ int printRaw(int val) {
   return val;
 }
 
-int equal(int val1, int val2) {
-  if (val1 == val2) { return BOOL_TRUE; }
-  if ((val1 & TUPLE_TAG_MASK) != 0 && (val2 & TUPLE_TAG_MASK) != 0) {
-    int *tup1 = (int*)(val1 - 1);
-    int *tup2 = (int*)(val2 - 1);
-    if (tup1[0] != tup2[0]) { return BOOL_FALSE; }
-    for (int i = 1; i <= tup1[0]; i++) {
-      if (equal(tup1[i], tup2[i]) == BOOL_FALSE)
+int equal(int a, int b)
+{
+    if (a == b)
+        return BOOL_TRUE;
+
+    if (((a & TUPLE_TAG_MASK) != 0x1) || ((b & TUPLE_TAG_MASK) != 0x1))
         return BOOL_FALSE;
-    }
+
+    const int* tup_a = (int*)(a - 1);
+    const int* tup_b = (int*)(b - 1);
+
+    for (size_t i = 0; i <= tup_a[0]; ++i)
+        if (equal(tup_a[i], tup_b[i]) == BOOL_FALSE)
+            return BOOL_FALSE;
+
     return BOOL_TRUE;
-  }
-  return BOOL_FALSE;
 }
+/*int equal(int val1, int val2) {*/
+  /*if (val1 == val2) { return BOOL_TRUE; }*/
+  /*if ((val1 & TUPLE_TAG_MASK) != 0 && (val2 & TUPLE_TAG_MASK) != 0) {*/
+    /*int *tup1 = (int*)(val1 - 1);*/
+    /*int *tup2 = (int*)(val2 - 1);*/
+    /*if (tup1[0] != tup2[0]) { return BOOL_FALSE; }*/
+    /*for (int i = 1; i <= tup1[0]; i++) {*/
+      /*if (equal(tup1[i], tup2[i]) == BOOL_FALSE)*/
+        /*return BOOL_FALSE;*/
+    /*}*/
+    /*return BOOL_TRUE;*/
+  /*}*/
+  /*return BOOL_FALSE;*/
+/*}*/
 
 void printHelp(FILE *out, int val) {
   if((val & NUM_TAG_MASK) == 0) {

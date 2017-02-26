@@ -371,8 +371,14 @@ and compile_cexpr e si env num_args is_tail =
         ]
         | PrintStack ->
             failwith "PrintStack not implemented"
-        | Print ->
-            failwith "Printnot implemented"
+        (*| Print ->*)
+            (*failwith "Printnot implemented"*)
+        | Print -> [
+            IMov(Reg(EAX), arg);
+            IPush(Reg(EAX));
+            ICall("print");
+            IPop(Reg(EAX));
+        ]
         | IsTuple ->
             [ IMov(Reg(EAX), arg); IAnd(Reg(EAX), tag_as_bool); ICmp(Reg(EAX), HexConst(0x1)); ] @
             block_true_false label (fun x -> IJne(x))
