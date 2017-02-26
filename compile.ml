@@ -180,6 +180,7 @@ and helpI (e : tag expr) : (unit immexpr * (string * unit cexpr) list) =
         let (expr_ans, expr_setup) = helpC expr in
         let (body_ans, body_setup) = helpI (ELet(rest, body, pos)) in
         (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
+    | ELetRec([], body, _) -> helpI body
     | ELetRec((name, expr, _)::rest, body, pos) ->
         (* TODO: This is no different from ELet *)
         let (expr_ans, expr_setup) = helpC expr in
@@ -314,6 +315,13 @@ let rec compile_fun fun_name args e : (instruction list * instruction list * ins
   ])
 and compile_aexpr e si env num_args is_tail =
     match e with
+    (* TODO: This is no different from ELet *)
+    | ALetRec(name, exp, body, _) ->
+        let setup = compile_cexpr exp si env num_args false in
+        let arg = RegOffset(~-si*word_size, EBP) in
+        let new_env = (name, arg)::env in
+        let main = compile_aexpr body (si+1) new_env num_args true in
+        setup @ [ IMov(arg, Reg(EAX)) ] @ main
     | ALet(name, exp, body, _) ->
         let setup = compile_cexpr exp si env num_args false in
         let arg = RegOffset(~-si*word_size, EBP) in
@@ -363,6 +371,8 @@ and compile_cexpr e si env num_args is_tail =
         ]
         | PrintStack ->
             failwith "PrintStack not implemented"
+        | Print ->
+            failwith "Printnot implemented"
         | IsTuple ->
             [ IMov(Reg(EAX), arg); IAnd(Reg(EAX), tag_as_bool); ICmp(Reg(EAX), HexConst(0x1)); ] @
             block_true_false label (fun x -> IJne(x))
@@ -415,6 +425,13 @@ and compile_cexpr e si env num_args is_tail =
             ILabel(label);
         ]
         )
+    | CLambda(args, expr, t) ->
+(*let rec compile_fun fun_name args e : (instruction list * instruction list * instruction list) =*)
+            (*let (compile_fun (sprintf "lambda_%d" t) args body*)
+        let (prologue, body, epilogue) = compile_fun (sprintf "lambda_%d" t) args expr in
+        (prologue @ body @ epilogue)
+        (* No free variables support *)
+        (*failwith "Implement pls"*)
     | CApp(func, args, _) ->
         (* Non-tail optimized *)
         call func args env
