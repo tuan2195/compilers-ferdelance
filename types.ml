@@ -6,7 +6,7 @@ type ('a, 'b) either =
   | Left of 'a
   | Right of 'b
 
-               
+
 type sourcespan = (Lexing.position * Lexing.position)
 exception UnboundId of string * sourcespan (* name, where used *)
 exception UnboundFun of string * sourcespan (* name of fun, where used *)

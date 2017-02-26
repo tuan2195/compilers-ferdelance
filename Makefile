@@ -32,3 +32,6 @@ clean:
 	rm -rf output/*.o output/*.s output/*.dSYM output/*.run *.log
 	rm -rf _build/
 	rm -f main test
+
+zip: clean
+	dir=`basename $$PWD`; cd ..; rm $$dir.zip; zip -r $$dir.zip ./$$dir -x *.git*
