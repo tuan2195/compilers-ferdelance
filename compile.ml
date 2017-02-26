@@ -29,6 +29,7 @@ let rec find ls x =
      if y = x then v else find rest x
 
 let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
+        (* TODO: Free vars and shit *)
     let rec wf_E e (env : sourcespan envt) =
         let rec dupe x binds =
             match binds with
@@ -105,6 +106,7 @@ let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
             (process_args args) @ (wf_E body args)
     in wf_E p []
 
+        (* TODO: Free vars and shit *)
 let anf (p : tag program) : unit aprogram =
 let rec helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
     match e with
@@ -113,6 +115,7 @@ let rec helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
         let (expr_ans, expr_setup) = helpC expr in
         let (body_ans, body_setup) = helpC (ELet(rest, body, pos)) in
         (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
+    | ELetRec([], body, _) -> helpC body
     | ELetRec((name, expr, _)::rest, body, pos) ->
         (* TODO: This is no different from ELet *)
         let (expr_ans, expr_setup) = helpC expr in
@@ -204,6 +207,7 @@ let count_vars e =
   let rec helpA e =
     match e with
     | ALet(_, bind, body, _) -> 1 + (max (helpC bind) (helpA body))
+    | ALetRec(_, bind, body, _) -> 1 + (max (helpC bind) (helpA body))
     | ACExpr e -> helpC e
   and helpC e =
     match e with
@@ -222,7 +226,9 @@ let const_false_value  = 0x7FFFFFFF
 let const_false        = Sized(DWORD_PTR, HexConst(const_false_value))
 let bool_mask          = Sized(DWORD_PTR, HexConst(0x80000000))
 let tag_as_bool        = Sized(DWORD_PTR, HexConst(0x00000007))
-let tag_last_bit       = Sized(DWORD_PTR, HexConst(0x00000001))
+let tag_1_bit          = Sized(DWORD_PTR, HexConst(0x00000001))
+let tag_3_bit          = Sized(DWORD_PTR, HexConst(0x00000007))
+let tag_func           = Sized(DWORD_PTR, HexConst(0x00000005))
 
 let err_COMP_NOT_NUM   = (Const(1), "__err_COMP_NOT_NUM__")
 let err_ARITH_NOT_NUM  = (Const(2), "__err_ARITH_NOT_NUM__")
@@ -269,7 +275,7 @@ let check_num arg label =
             [ IMov(Reg(EAX), arg); ]
     | _ ->
         [ IMov(Reg(EAX), arg);
-          ITest(Reg(EAX), tag_last_bit);
+          ITest(Reg(EAX), tag_1_bit);
           IJnz(label); ]
 
 let check_logic arg = check_bool arg (snd err_LOGIC_NOT_BOOL)
@@ -409,21 +415,24 @@ and compile_cexpr e si env num_args is_tail =
             ILabel(label);
         ]
         )
-    | CApp(name, args, _) ->
-        if is_tail && (num_args = List.length args) then
-            List.flatten (List.mapi
-              (fun i a -> [ IMov(Reg(EAX), a); IMov(RegOffset(word_size*(i+2), EBP), Reg(EAX)); ])
-              (List.rev_map (fun a -> compile_imm a env) args)) @
-            [  IInstrComment(IJmp(label_func_begin name), "Tail-call optimized") ]
-        else
-           call name (List.map (fun a -> compile_imm a env) args)
+    | CApp(func, args, _) ->
+        (* Non-tail optimized *)
+        call func args env
+
+        (*if is_tail && (num_args = List.length args) then*)
+            (*List.flatten (List.mapi*)
+              (*(fun i a -> [ IMov(Reg(EAX), a); IMov(RegOffset(word_size*(i+2), EBP), Reg(EAX)); ])*)
+              (*(List.rev_map (fun a -> compile_imm a env) args)) @*)
+            (*[  IInstrComment(IJmp(label_func_begin name), "Tail-call optimized") ]*)
+        (*else*)
+           (*call name (List.map (fun a -> compile_imm a env) args)*)
     | CImmExpr(e) ->
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
         let size = List.length expr_ls in
         let prelude = [
             IMov(Reg(EAX), Reg(ESI));
-            IOr(Reg(EAX), tag_last_bit);
+            IOr(Reg(EAX), tag_1_bit);
             IMov(Sized(DWORD_PTR, RegOffset(0, ESI)), Const(size)); ] in
         let (_, load) = List.fold_right
             (fun arg (offset, ls) -> (offset+word_size, ls @ [
@@ -438,7 +447,8 @@ and compile_cexpr e si env num_args is_tail =
         prelude @ load @ padding
     | CGetItem(tup, idx, _) -> [
         IMov(Reg(ECX), compile_imm tup env);
-        ITest(Reg(ECX), tag_last_bit);
+        (* TODO: Better testing *)
+        ITest(Reg(ECX), tag_1_bit);
         IJz(snd err_NOT_TUPLE);
         ISub(Reg(ECX), Const(1)); ]
       @ check_index (compile_imm idx env) @ [
@@ -452,18 +462,53 @@ and compile_cexpr e si env num_args is_tail =
         IMov(Reg(EAX), RegOffsetReg(ECX, EAX, word_size, 0));
         ]
 and compile_imm e env =
-  match e with
-  | ImmNum(n, _) -> Const(n lsl 1)
-  | ImmBool(true, _) -> const_true
-  | ImmBool(false, _) -> const_false
-  | ImmId(x, _) -> (find env x)
-and call label args =
-  let setup = List.map (fun arg -> IPush(Sized(DWORD_PTR, arg))) args in
-  let teardown =
-    let len = List.length args in
-    if len = 0 then []
-    else [ IInstrComment(IAdd(Reg(ESP), Const(4 * len)), sprintf "Popping %d arguments" len) ] in
-  [ ILineComment(sprintf "Call to function %s" label) ] @ setup @ [ ICall(label) ] @ teardown
+    match e with
+    | ImmNum(n, _) -> Const(n lsl 1)
+    | ImmBool(true, _) -> const_true
+    | ImmBool(false, _) -> const_false
+    | ImmId(x, _) -> (find env x)
+and id_name e =
+    match e with
+    | ImmId(x, _) -> x
+    | _ -> failwith "Not a variable!"
+and call func args env =
+    let isfunc = [
+        IMov(Reg(EAX), compile_imm func env);
+        IAnd(Reg(EAX), tag_3_bit);
+        ICmp(Reg(EAX), tag_func);
+        (* TODO: Insert correct error *)
+        IJne(snd err_COMP_NOT_NUM);
+    ] in let arity = [
+        IMov(Reg(EAX), compile_imm func env);
+        ISub(Reg(EAX), tag_func);
+        IMov(Reg(EBX), RegOffset(0, EAX));
+        ICmp(Reg(EBX), Const(List.length args));
+        (* TODO: Insert correct error *)
+        IJne(snd err_ARITH_NOT_NUM);
+    ] in
+    let setup = List.map
+        (fun arg -> IPush(Sized(DWORD_PTR, arg)))
+        (List.map (fun x -> compile_imm x env) args) in
+    let call = [
+        IMov(Reg(ECX), RegOffset(word_size, EAX));
+        ICall("ECX");
+    ] in
+    let teardown =
+        let len = List.length args in
+            if len = 0 then []
+            else [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop%d arguments" len) ] in
+    [ ILineComment(sprintf "Function %s call" (id_name func)) ;] @
+    isfunc @ arity @ setup @ call @ teardown
+
+  (*let setup = List.map (fun arg -> IPush(Sized(DWORD_PTR, arg))) args in*)
+
+(*and call label args =*)
+  (*let setup = List.map (fun arg -> IPush(Sized(DWORD_PTR, arg))) args in*)
+  (*let teardown =*)
+    (*let len = List.length args in*)
+    (*if len = 0 then []*)
+    (*else [ IInstrComment(IAdd(Reg(ESP), Const(4 * len)), sprintf "Popping %d arguments" len) ] in*)
+  (*[ ILineComment(sprintf "Call to function %s" label) ] @ setup @ [ ICall(label) ] @ teardown*)
 and optimize ls =
     match ls with
     | [] -> []
@@ -476,14 +521,6 @@ and optimize ls =
         what::optimize rest
 ;;
 
-let compile_decl (d : tag adecl) : instruction list =
-  match d with
-  | ADFun(name, args, body, _) ->
-     let (prologue, comp_body, epilogue) = compile_fun name args body
-     in (prologue @ comp_body @ epilogue)
-  | ADExt(name, _) -> []
-;;
-
 let compile_prog anfed =
   let prelude =
     "section .text
@@ -493,45 +530,39 @@ extern input
 extern equal
 extern print_stack
 global our_code_starts_here" in
-  let suffix =
-      let call err = [ ILabel(snd err); IPush(fst err); ICall("error"); ] in
-      to_asm (List.flatten [
-          call err_COMP_NOT_NUM;
-          call err_ARITH_NOT_NUM;
-          call err_LOGIC_NOT_BOOL;
-          call err_IF_NOT_BOOL;
-          call err_OVERFLOW;
-          call err_NOT_TUPLE;
-          call err_INDEX_NOT_NUM;
-          call err_INDEX_LARGE;
-          call err_INDEX_SMALL;
-      ])
-  in
-  match anfed with
-  | AProgram(decls, body, _) ->
-     let comp_decls = List.map compile_decl decls in
-     let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] body in
-     let heap_start = [
-         ILineComment("heap start");
-         IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");
-         IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");
-         IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")
-       ] in
-     let main = (prologue @ heap_start @ comp_main @ epilogue) in
-     let as_assembly_string = ExtString.String.join "\n" (List.map to_asm comp_decls) in
-     sprintf "%s%s\n%s%s\n" prelude as_assembly_string (to_asm main) suffix
+    let suffix =
+        let call err = [ ILabel(snd err); IPush(fst err); ICall("error"); ] in
+        to_asm (List.flatten [
+            call err_COMP_NOT_NUM;
+            call err_ARITH_NOT_NUM;
+            call err_LOGIC_NOT_BOOL;
+            call err_IF_NOT_BOOL;
+            call err_OVERFLOW;
+            call err_NOT_TUPLE;
+            call err_INDEX_NOT_NUM;
+            call err_INDEX_LARGE;
+            call err_INDEX_SMALL;
+        ]) in
+    let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed in
+    let heap_start = [
+        ILineComment("heap start");
+        IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");
+        IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");
+        IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")
+    ] in
+    let main = (prologue @ heap_start @ comp_main @ epilogue) in
+    sprintf "%s\n%s\n%s\n" prelude (to_asm main) suffix
 
 let compile_to_string prog : (exn list, string) either =
-  match prog with
-  | Program(decls, body, t) ->
-      let ext_funcs = [DExt("print", 1); DExt("input", 0)] in
-      let errors = well_formed (Program(ext_funcs @ decls, body, t)) in
-      match errors with
-      | [] ->
-         let tagged : tag program = tag prog in
-         let anfed : tag aprogram = atag (anf tagged) in
-         (* printf "Prog:\n%s\n" (ast_of_expr prog); *)
-         (* printf "Tagged:\n%s\n" (format_expr tagged string_of_int); *)
-         (* printf "ANFed/tagged:\n%s\n" (format_expr anfed string_of_int); *)
-         Right(compile_prog anfed)
-      | _ -> Left(errors)
+    (*let ext_funcs = [DExt("print", 1); DExt("input", 0)] in*)
+    (*let errors = well_formed (Program(ext_funcs @ decls, body, t)) in*)
+    let errors = well_formed prog in
+    match errors with
+    | [] ->
+       let tagged : tag program = tag prog in
+       let anfed : tag aprogram = atag (anf tagged) in
+       (* printf "Prog:\n%s\n" (ast_of_expr prog); *)
+       (* printf "Tagged:\n%s\n" (format_expr tagged string_of_int); *)
+       (* printf "ANFed/tagged:\n%s\n" (format_expr anfed string_of_int); *)
+       Right(compile_prog anfed)
+    | _ -> Left(errors)
