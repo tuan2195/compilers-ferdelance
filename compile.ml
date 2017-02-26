@@ -22,66 +22,102 @@ and is_imm e =
     | _ -> false
 ;;
 
-let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
-  (*let rec wf_E e (env : sourcespan envt) ( : (sourcespan * int) envt) =*)
-  let rec wf_E e (env : sourcespan envt) =
-    match e with
-    | EBool _ -> []
-    | ENumber(n, pos) ->
-       if n > 1073741823 || n < -1073741824 then [Overflow(n, pos)] else []
-    | EId (x, pos) ->
-       (try ignore (List.assoc x env); []
-        with Not_found -> [UnboundId(x, pos)])
-    | EPrim1(_, e, _) -> wf_E e env
-    | EPrim2(_, l, r, _) -> wf_E l env  @ wf_E r env
-    | EIf(c, t, f, _) -> wf_E c env  @ wf_E t env  @ wf_E f env
-    | ELet(binds, body, _) ->
-       let rec dupe x binds =
-         match binds with
-         | [] -> None
-         | (y, _, pos)::_ when x = y -> Some pos
-         | _::rest -> dupe x rest in
-       let rec process_binds rem_binds env =
-         match rem_binds with
-         | [] -> (env, [])
-         | (x, e, pos)::rest ->
-            let shadow =
-              match dupe x rest with
-              | Some where -> [DuplicateId(x, where, pos)]
-              | None ->
-                 try
-                   let existing = List.assoc x env in [ShadowId(x, pos, existing)]
-                 with Not_found -> [] in
-            let errs_e = wf_E e env  in
-            let new_env = (x, pos)::env in
-            let (newer_env, errs) = process_binds rest new_env in
-            (newer_env, (shadow @ errs_e @ errs)) in
-       let (env2, errs) = process_binds binds env in
-       errs @ wf_E body env2
-    | EGetItem(tup, idx, _) ->
-        wf_E tup env   @ wf_E idx env
-    | ETuple(expr_ls, _) ->
-        List.flatten (List.map (fun e -> wf_E e env ) expr_ls)
-    | _ -> []
-    (* TODO: Implement more checks *)
-  in wf_E p []
-
 let rec find ls x =
   match ls with
   | [] -> failwith (sprintf "Name %s not found" x)
   | (y,v)::rest ->
      if y = x then v else find rest x
 
+let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
+    let rec wf_E e (env : sourcespan envt) =
+        let rec dupe x binds =
+            match binds with
+            | [] -> None
+            | (y, _, pos)::_ when x = y -> Some pos
+            | _::rest -> dupe x rest in
+        match e with
+        | ELet(binds, body, _) ->
+            let rec process_binds rem_binds env =
+                match rem_binds with
+                | [] -> (env, [])
+                | (x, e, pos)::rest ->
+                    let shadow = match dupe x rest with
+                        | Some where -> [DuplicateId(x, where, pos)]
+                        | None ->
+                            try let existing = List.assoc x env in
+                                [ShadowId(x, pos, existing)]
+                            with Not_found -> [] in
+                    let errs_e = wf_E e env  in
+                    let new_env = (x, pos)::env in
+                    let (newer_env, errs) = process_binds rest new_env in
+                    (newer_env, (shadow @ errs_e @ errs)) in
+            let (env2, errs) = process_binds binds env in
+            errs @ wf_E body env2
+        | ELetRec(binds, body, _) ->
+            let rec process_binds rem_binds env =
+                match rem_binds with
+                | [] -> (env, [])
+                | (x, e, pos)::rest ->
+                    match e with
+                    | ELambda _ ->
+                        let shadow = match dupe x rest with
+                            | Some where -> [DuplicateFun(x, where, pos)]
+                            | None ->
+                                try let existing = List.assoc x env in
+                                    [DuplicateFun(x, pos, existing)]
+                                with Not_found -> [] in
+                        let errs_e = wf_E e env  in
+                        let new_env = (x, pos)::env in
+                        let (newer_env, errs) = process_binds rest new_env in
+                        (newer_env, (shadow @ errs_e @ errs))
+                    | _ ->
+                        let (new_env, errs) = process_binds rest env in
+                        (new_env, LetRecNonFunction(x, pos)::errs) in
+            (* TODO: This is no different from ELet *)
+            let (env2, errs) = process_binds binds env in
+            errs @ wf_E body env2
+        | EPrim1(_, e, _) -> wf_E e env
+        | EPrim2(_, l, r, _) -> wf_E l env  @ wf_E r env
+        | EIf(c, t, f, _) -> wf_E c env  @ wf_E t env  @ wf_E f env
+        | ETuple(expr_ls, _) -> List.flatten (List.map (fun e -> wf_E e env ) expr_ls)
+        | EGetItem(tup, idx, _) -> wf_E tup env   @ wf_E idx env
+        | ENumber(n, pos) ->
+            if n > 1073741823 || n < -1073741824 then [Overflow(n, pos)] else []
+        | EBool _ -> []
+        | EId(x, pos) ->
+            (try ignore (List.assoc x env); []
+            with Not_found -> [UnboundId(x, pos)])
+        | EApp(func, args_ls, pos) ->
+            (wf_E func env) @
+            (List.flatten (List.map (fun x -> wf_E x env) args_ls))
+        | ELambda(args, body, pos) ->
+            let rec dupe x args =
+                match args with
+                | [] -> None
+                | (y, pos)::_ when x = y -> Some pos
+                | _::rest -> dupe x rest in
+            let rec process_args rem_args =
+                match rem_args with
+                | [] -> []
+                | (x, pos)::rest -> (match dupe x rest with
+                    | None -> []
+                    | Some where -> [DuplicateId(x, where, pos)]) @ process_args rest in
+            (process_args args) @ (wf_E body args)
+    in wf_E p []
+
 let anf (p : tag program) : unit aprogram =
-  let rec helpP (p : tag program) : unit aprogram = helpA p
-    (*match p with*)
-    (*| Program(decls, body, _) -> AProgram(List.map helpD decls, helpA body, ())*)
-  and helpD (d : tag decl) : unit adecl =
-    match d with
-    | DFun(name, args, body, _) -> ADFun(name, List.map fst args, helpA body, ())
-    | DExt(name, num_args) -> ADExt(name, num_args)
-  and helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
+let rec helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
     match e with
+    | ELet([], body, _) -> helpC body
+    | ELet((name, expr, _)::rest, body, pos) ->
+        let (expr_ans, expr_setup) = helpC expr in
+        let (body_ans, body_setup) = helpC (ELet(rest, body, pos)) in
+        (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
+    | ELetRec((name, expr, _)::rest, body, pos) ->
+        (* TODO: This is no different from ELet *)
+        let (expr_ans, expr_setup) = helpC expr in
+        let (body_ans, body_setup) = helpC (ELetRec(rest, body, pos)) in
+        (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
     | EPrim1(op, arg, _) ->
         let (arg_imm, arg_setup) = helpI arg in
         (CPrim1(op, arg_imm, ()), arg_setup)
@@ -92,14 +128,6 @@ let anf (p : tag program) : unit aprogram =
     | EIf(cond, _then, _else, _) ->
         let (cond_imm, cond_setup) = helpI cond in
         (CIf(cond_imm, helpA _then, helpA _else, ()), cond_setup)
-    | ELet([], body, _) -> helpC body
-    | ELet((bind, exp, _)::rest, body, pos) ->
-        let (exp_ans, exp_setup) = helpC exp in
-        let (body_ans, body_setup) = helpC (ELet(rest, body, pos)) in
-        (body_ans, exp_setup @ [(bind, exp_ans)] @ body_setup)
-    | EApp(funname, args, _) ->
-        let (ans, setup) = help_foldI args in
-        (CApp(funname, ans, ()), setup)
     | ETuple(expr_ls, _) ->
         let (ans, setup) = help_foldI expr_ls in
         (CTuple(ans, ()), setup)
@@ -107,12 +135,18 @@ let anf (p : tag program) : unit aprogram =
         let (tup_ans, tup_setup) = helpI tup in
         let (idx_ans, idx_setup) = helpI idx in
         (CGetItem(tup_ans, idx_ans, ()), tup_setup @ idx_setup)
+    | EApp(func, args_ls, _) ->
+        let (ans_func, setup_func) = helpI func in
+        let (ans_args, setup_args) = help_foldI args_ls in
+        (CApp(ans_func, ans_args, ()), setup_func @ setup_args)
+    | ELambda(args, body, _) ->
+        (CLambda(List.map fst args, helpA body, ()), [])
     | _ -> let (imm, setup) = helpI e in (CImmExpr imm, setup)
-  and helpI (e : tag expr) : (unit immexpr * (string * unit cexpr) list) =
+and helpI (e : tag expr) : (unit immexpr * (string * unit cexpr) list) =
     match e with
     | ENumber(n, _) -> (ImmNum(n, ()), [])
     | EBool(b, _) -> (ImmBool(b, ()), [])
-    | EId(name, _) -> (ImmId(name, ()), [])
+    | EId(id, _) -> (ImmId(id, ()), [])
     | EPrim1(op, arg, tag) ->
         let name = sprintf "unary_%d" tag in
         let (arg_imm, arg_setup) = helpI arg in
@@ -126,35 +160,44 @@ let anf (p : tag program) : unit aprogram =
         let name = sprintf "if_%d" tag in
         let (cond_imm, cond_setup) = helpI cond in
         (ImmId(name, ()), cond_setup @ [(name, CIf(cond_imm, helpA _then, helpA _else, ()))])
-    | EApp(funname, args, tag) ->
-         let name = sprintf "func_%s_%d" funname tag in
-         let (ans, setup) = helpC e in
-         (ImmId(name, ()), setup @ [(name, ans)])
+    | EApp(func, args_ls, tag) ->
+        let name = sprintf "func_%d" tag in
+        let (ans, setup) = helpC e in
+        (ImmId(name, ()), setup @ [(name, ans)])
     | ETuple(expr_ls, tag) ->
-         let name = sprintf "tuple_%d" tag in
-         let (ans, setup) = helpC e in
-         (ImmId(name, ()), setup @ [(name, ans)])
+        let name = sprintf "tuple_%d" tag in
+        let (ans, setup) = helpC e in
+        (ImmId(name, ()), setup @ [(name, ans)])
     | EGetItem(tup, idx, tag) ->
-         let name = sprintf "getitem_%d" tag in
-         let (ans, setup) = helpC e in
-         (ImmId(name, ()), setup @ [(name, ans)])
+        let name = sprintf "getitem_%d" tag in
+        let (ans, setup) = helpC e in
+        (ImmId(name, ()), setup @ [(name, ans)])
     | ELet([], body, _) -> helpI body
-    | ELet((bind, exp, _)::rest, body, pos) ->
-        let (exp_ans, exp_setup) = helpC exp in
+    | ELet((name, expr, _)::rest, body, pos) ->
+        let (expr_ans, expr_setup) = helpC expr in
         let (body_ans, body_setup) = helpI (ELet(rest, body, pos)) in
-        (body_ans, exp_setup @ [(bind, exp_ans)] @ body_setup)
-  and helpA e : unit aexpr =
+        (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
+    | ELetRec((name, expr, _)::rest, body, pos) ->
+        (* TODO: This is no different from ELet *)
+        let (expr_ans, expr_setup) = helpC expr in
+        let (body_ans, body_setup) = helpI (ELetRec(rest, body, pos)) in
+        (body_ans, expr_setup @ [(name, expr_ans)] @ body_setup)
+    | ELambda(args, body, tag) ->
+        let name = sprintf "lambda_%d" tag in
+        let (ans, setup) = helpC e in
+        (ImmId(name, ()), setup @ [(name, ans)])
+
+and helpA e : unit aexpr =
     let (ans, ans_setup) = helpC e in
     List.fold_right (fun (bind, exp) body -> ALet(bind, exp, body, ())) ans_setup (ACExpr ans)
-  and help_foldI expr_ls = List.fold_left
+and help_foldI expr_ls = List.fold_left
     (fun (prev_ans, prev_setup) expr ->
         let (ans, setup) = helpI expr in
         (ans::prev_ans, setup @ prev_setup)
     )
     ([], [])
     expr_ls
-  in
-  helpP p
+in helpA p
 ;;
 
 let count_vars e =
