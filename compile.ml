@@ -241,7 +241,7 @@ let err_INDEX_NOT_NUM  = (Const(7), "__err_INDEX_NOT_NUM__")
 let err_INDEX_LARGE    = (Const(8), "__err_INDEX_LARGE__")
 let err_INDEX_SMALL    = (Const(9), "__err_INDEX_SMALL__")
 
-let label_func_begin name = sprintf "__%s_func_begin__" name
+let label_func_begin name = sprintf "%s_func_begin__" name
 
 let rec arg_to_const arg =
     match arg with
@@ -305,7 +305,7 @@ let rec compile_fun fun_name args e : (instruction list * instruction list * ins
      ]
     @ replicate (IPush(Sized(DWORD_PTR, Const(0)))) count_local_vars),
    ([ ILineComment("Function body") ]
-    @ [ ILabel(label_func_begin fun_name); ]
+    @ [ ILabel(sprintf "%s_func_begin__" fun_name); ]
     @ optimized),
    [
      ILineComment("Function epilogue");
@@ -321,13 +321,15 @@ and compile_aexpr e si env num_args is_tail =
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
         let main = compile_aexpr body (si+1) new_env num_args true in
-        setup @ [ IMov(arg, Reg(EAX)) ] @ main
+        let cmt = lambda_cmt exp name in
+        cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
     | ALet(name, exp, body, _) ->
         let setup = compile_cexpr exp si env num_args false in
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
         let main = compile_aexpr body (si+1) new_env num_args true in
-        setup @ [ IMov(arg, Reg(EAX)) ] @ main
+        let cmt = lambda_cmt exp name in
+        cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
     | ACExpr(e) ->
         compile_cexpr e si env num_args true
 and compile_cexpr e si env num_args is_tail =
@@ -371,8 +373,6 @@ and compile_cexpr e si env num_args is_tail =
         ]
         | PrintStack ->
             failwith "PrintStack not implemented"
-        (*| Print ->*)
-            (*failwith "Printnot implemented"*)
         | Print -> [
             IMov(Reg(EAX), arg);
             IPush(Reg(EAX));
@@ -432,23 +432,25 @@ and compile_cexpr e si env num_args is_tail =
         ]
         )
     | CLambda(args, expr, t) ->
-(*let rec compile_fun fun_name args e : (instruction list * instruction list * instruction list) =*)
-            (*let (compile_fun (sprintf "lambda_%d" t) args body*)
-        let (prologue, body, epilogue) = compile_fun (sprintf "lambda_%d" t) args expr in
-        (prologue @ body @ epilogue)
-        (* No free variables support *)
+        let func = sprintf "__lambda_%d__" t in
+        let label = sprintf "__lambda_%d_done__" t in
+        let (a, b, c) = compile_fun func args expr in
+        let main = a @ b @ c in
+        let setup = [
+            IMov(Reg(EAX), Reg(ESI));
+            IOr(Reg(EAX), tag_func);
+            IMov(Sized(DWORD_PTR, RegOffset(0, ESI)), Const(List.length args));
+            IMov(Sized(DWORD_PTR, RegOffset(word_size, ESI)), Label(func));
+            IAdd(Reg(ESI), Const(word_size * 2));
+            (* TODO: Add paddings once have free vars *)
+            IJmp(label);
+        ] in
+        let post = [ ILabel(label); ] in
+        setup @ main @ post
+        (* TODO: Implement free variables support *)
         (*failwith "Implement pls"*)
     | CApp(func, args, _) ->
-        (* Non-tail optimized *)
         call func args env
-
-        (*if is_tail && (num_args = List.length args) then*)
-            (*List.flatten (List.mapi*)
-              (*(fun i a -> [ IMov(Reg(EAX), a); IMov(RegOffset(word_size*(i+2), EBP), Reg(EAX)); ])*)
-              (*(List.rev_map (fun a -> compile_imm a env) args)) @*)
-            (*[  IInstrComment(IJmp(label_func_begin name), "Tail-call optimized") ]*)
-        (*else*)
-           (*call name (List.map (fun a -> compile_imm a env) args)*)
     | CImmExpr(e) ->
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
@@ -494,6 +496,10 @@ and id_name e =
     match e with
     | ImmId(x, _) -> x
     | _ -> failwith "Not a variable!"
+and lambda_cmt e s =
+    match e with
+    | CLambda _ -> [ ILineComment(sprintf "Function/Lambda: %s" s); ]
+    | _ -> []
 and call func args env =
     let isfunc = [
         IMov(Reg(EAX), compile_imm func env);
@@ -532,16 +538,16 @@ and call func args env =
     (*if len = 0 then []*)
     (*else [ IInstrComment(IAdd(Reg(ESP), Const(4 * len)), sprintf "Popping %d arguments" len) ] in*)
   (*[ ILineComment(sprintf "Call to function %s" label) ] @ setup @ [ ICall(label) ] @ teardown*)
-and optimize ls =
-    match ls with
-    | [] -> []
-    | IMov(RegOffset(o1, b1), Reg(r1))::IMov(Reg(r2), RegOffset(o2, b2))::rest ->
-        if o1 = o2 && b1 = b2 && r1 = r2 then
-            (List.hd ls)::optimize rest
-        else
-            (List.hd ls)::optimize (List.tl ls)
-    | what::rest ->
-        what::optimize rest
+and optimize ls = ls
+    (*match ls with*)
+    (*| [] -> []*)
+    (*| IMov(RegOffset(o1, b1), Reg(r1))::IMov(Reg(r2), RegOffset(o2, b2))::rest ->*)
+        (*if o1 = o2 && b1 = b2 && r1 = r2 then*)
+            (*(List.hd ls)::optimize rest*)
+        (*else*)
+            (*(List.hd ls)::optimize (List.tl ls)*)
+    (*| what::rest ->*)
+        (*what::optimize rest*)
 ;;
 
 let compile_prog anfed =

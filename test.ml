@@ -61,6 +61,18 @@ let tests = [
   t "m15" "let x = 5, y = 6 in x * y" "30";
   t "m16" "let x = 5, y = 6 in let z = let a = x * y in a in z" "30";
 
+  t "f1" "let sq = (lambda x: x * x), ten = (lambda: 10) in sq(ten())" "100";
+  t "f2" "let add = (lambda x, y: x + y) in add(5, 6)" "11";
+  t "f3" "let f = (lambda x,y,z: x*y+z),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y) in
+          h(2,3)" "7";
+  (*t "f4" "let f = (lambda x,y,z,t: x*y+z*t),*)
+          (*g = (lambda x,y: x+y),*)
+          (*h = (lambda x,y: 2*x+y),*)
+          (*j = (lambda x: x*x) in*)
+          (*j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";*)
+
   t "tup_1" "let x = (3, 4, 5, 6) in x[0]" "3";
   t "tup_2" "let x = (3, 4, 5, 6) in x[1]" "4";
   t "tup_3" "let x = (3, 4, 5, 6) in x[2]" "5";
