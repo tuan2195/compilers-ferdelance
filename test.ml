@@ -66,12 +66,12 @@ let tests = [
   t "f3" "let f = (lambda x,y,z: x*y+z),
           g = (lambda x,y: x+y),
           h = (lambda x,y: 2*x+y) in
-          h(2,3)" "7";
-  (*t "f4" "let f = (lambda x,y,z,t: x*y+z*t),*)
-          (*g = (lambda x,y: x+y),*)
-          (*h = (lambda x,y: 2*x+y),*)
-          (*j = (lambda x: x*x) in*)
-          (*j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";*)
+          f(g(3,4),g(2,2),h(5,9))" "47";
+  t "f4" "let f = (lambda x,y,z,t: x*y+z*t),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y),
+          j = (lambda x: x*x) in
+          j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
 
   t "tup_1" "let x = (3, 4, 5, 6) in x[0]" "3";
   t "tup_2" "let x = (3, 4, 5, 6) in x[1]" "4";
