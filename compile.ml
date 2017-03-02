@@ -28,85 +28,97 @@ let rec find ls x =
   | (y,v)::rest ->
      if y = x then v else find rest x
 
+(*let rec find_true env x =*)
+    (*match env with*)
+    (*| [] -> false*)
+    (*| (n, _)::rest when n = x -> true*)
+    (*| _ -> find_true (List.tl env) x*)
+
+let rec print_env e cmt =
+    match e with
+    | [] -> ()
+    | (x, _)::rest -> printf "%s: %s\n" cmt x; print_env rest cmt
+
 let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
         (* TODO: Free vars and shit *)
-    let rec wf_E e (env : sourcespan envt) =
-        let rec dupe x binds =
-            match binds with
-            | [] -> None
-            | (y, _, pos)::_ when x = y -> Some pos
-            | _::rest -> dupe x rest in
-        match e with
-        | ELet(binds, body, _) ->
-            let rec process_binds rem_binds env =
-                match rem_binds with
-                | [] -> (env, [])
-                | (x, e, pos)::rest ->
+let rec wf_E e (env : sourcespan envt) =
+    let rec dupe x binds =
+        match binds with
+        | [] -> None
+        | (y, _, pos)::_ when x = y -> Some pos
+        | _::rest -> dupe x rest in
+    match e with
+    | ELet(binds, body, _) ->
+        let rec process_binds rem_binds env =
+            match rem_binds with
+            | [] -> (env, [])
+            | (x, e, pos)::rest ->
+                let shadow = match dupe x rest with
+                    | Some where -> [DuplicateId(x, where, pos)]
+                    | None ->
+                        try let existing = List.assoc x env in
+                            [ShadowId(x, pos, existing)]
+                        with Not_found -> [] in
+                let errs_e = wf_E e env  in
+                let new_env = (x, pos)::env in
+                let (newer_env, errs) = process_binds rest new_env in
+                (newer_env, (shadow @ errs_e @ errs)) in
+        let (env2, errs) = process_binds binds env in
+        errs @ wf_E body env2
+    | ELetRec(binds, body, _) ->
+        let rec build_env b =
+            match b with
+            | [] -> []
+            | (x, _, pos)::rest -> (x, pos)::build_env rest in
+        let new_env = env @ build_env binds in
+        let rec process_binds rem_binds =
+            match rem_binds with
+            | [] -> []
+            | (x, e, pos)::rest ->
+                match e with
+                | ELambda _ ->
                     let shadow = match dupe x rest with
-                        | Some where -> [DuplicateId(x, where, pos)]
+                        | Some where -> [DuplicateFun(x, where, pos)]
                         | None ->
                             try let existing = List.assoc x env in
                                 [ShadowId(x, pos, existing)]
                             with Not_found -> [] in
-                    let errs_e = wf_E e env  in
-                    let new_env = (x, pos)::env in
-                    let (newer_env, errs) = process_binds rest new_env in
-                    (newer_env, (shadow @ errs_e @ errs)) in
-            let (env2, errs) = process_binds binds env in
-            errs @ wf_E body env2
-        | ELetRec(binds, body, _) ->
-            let rec process_binds rem_binds env =
-                match rem_binds with
-                | [] -> (env, [])
-                | (x, e, pos)::rest ->
-                    match e with
-                    | ELambda _ ->
-                        let shadow = match dupe x rest with
-                            | Some where -> [DuplicateFun(x, where, pos)]
-                            | None ->
-                                try let existing = List.assoc x env in
-                                    [DuplicateFun(x, pos, existing)]
-                                with Not_found -> [] in
-                        let errs_e = wf_E e env  in
-                        let new_env = (x, pos)::env in
-                        let (newer_env, errs) = process_binds rest new_env in
-                        (newer_env, (shadow @ errs_e @ errs))
-                    | _ ->
-                        let (new_env, errs) = process_binds rest env in
-                        (new_env, LetRecNonFunction(x, pos)::errs) in
-            (* TODO: This is no different from ELet *)
-            let (env2, errs) = process_binds binds env in
-            errs @ wf_E body env2
-        | EPrim1(_, e, _) -> wf_E e env
-        | EPrim2(_, l, r, _) -> wf_E l env  @ wf_E r env
-        | EIf(c, t, f, _) -> wf_E c env  @ wf_E t env  @ wf_E f env
-        | ETuple(expr_ls, _) -> List.flatten (List.map (fun e -> wf_E e env ) expr_ls)
-        | EGetItem(tup, idx, _) -> wf_E tup env   @ wf_E idx env
-        | ENumber(n, pos) ->
-            if n > 1073741823 || n < -1073741824 then [Overflow(n, pos)] else []
-        | EBool _ -> []
-        | EId(x, pos) ->
-            (try ignore (List.assoc x env); []
-            with Not_found -> [UnboundId(x, pos)])
-        | EApp(func, args_ls, pos) ->
-            (wf_E func env) @
-            (List.flatten (List.map (fun x -> wf_E x env) args_ls))
-        | ELambda(args, body, pos) ->
-            let rec dupe x args =
-                match args with
-                | [] -> None
-                | (y, pos)::_ when x = y -> Some pos
-                | _::rest -> dupe x rest in
-            let rec process_args rem_args =
-                match rem_args with
-                | [] -> []
-                | (x, pos)::rest -> (match dupe x rest with
-                    | None -> []
-                    | Some where -> [DuplicateId(x, where, pos)]) @ process_args rest in
-            (process_args args) @ (wf_E body args)
-    in wf_E p []
+                    let errs_e = wf_E e new_env in
+                    let errs = process_binds rest in
+                    (shadow @ errs_e @ errs)
+                | _ ->
+                    let errs = process_binds rest in
+                    LetRecNonFunction(x, pos)::errs in
+        let errs = process_binds binds in
+        errs @ wf_E body new_env
+    | EPrim1(_, e, _) -> wf_E e env
+    | EPrim2(_, l, r, _) -> wf_E l env  @ wf_E r env
+    | EIf(c, t, f, _) -> wf_E c env  @ wf_E t env  @ wf_E f env
+    | ETuple(expr_ls, _) -> List.flatten (List.map (fun e -> wf_E e env ) expr_ls)
+    | EGetItem(tup, idx, _) -> wf_E tup env   @ wf_E idx env
+    | ENumber(n, pos) ->
+        if n > 1073741823 || n < -1073741824 then [Overflow(n, pos)] else []
+    | EBool _ -> []
+    | EId(x, pos) ->
+        (try ignore (List.assoc x env); [] with Not_found -> [UnboundId(x, pos)])
+    | EApp(func, args_ls, pos) ->
+        (wf_E func env) @ (List.flatten (List.map (fun x -> wf_E x env) args_ls))
+    | ELambda(args, body, pos) ->
+        let rec dupe x args =
+            match args with
+            | [] -> None
+            | (y, pos)::_ when x = y -> Some pos
+            | _::rest -> dupe x rest in
+        let rec process_args args =
+            match args with
+            | [] -> []
+            | (x, pos)::rest -> (match dupe x rest with
+                | None -> []
+                | Some where -> [DuplicateId(x, where, pos)]) @ process_args rest in
+        (process_args args) @ (wf_E body (args @ env))
+in wf_E p []
 
-        (* TODO: Free vars and shit *)
+(* TODO: Free vars and shit *)
 let anf (p : tag program) : unit aprogram =
 let rec helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
     match e with
@@ -190,10 +202,12 @@ and helpI (e : tag expr) : (unit immexpr * (string * unit cexpr) list) =
         let name = sprintf "lambda_%d" tag in
         let (ans, setup) = helpC e in
         (ImmId(name, ()), setup @ [(name, ans)])
-
 and helpA e : unit aexpr =
     let (ans, ans_setup) = helpC e in
     List.fold_right (fun (bind, exp) body -> ALet(bind, exp, body, ())) ans_setup (ACExpr ans)
+(*and helpArec e : unit aexpr =*)
+    (*let (ans, ans_setup) = helpC e in*)
+    (*List.fold_right (fun (bind, exp) body -> ALetRec(bind, exp, body, ())) ans_setup (ACExpr ans)*)
 and help_foldI expr_ls = List.fold_left
     (fun (prev_ans, prev_setup) expr ->
         let (ans, setup) = helpI expr in
@@ -230,6 +244,7 @@ let tag_as_bool        = Sized(DWORD_PTR, HexConst(0x00000007))
 let tag_1_bit          = Sized(DWORD_PTR, HexConst(0x00000001))
 let tag_3_bit          = Sized(DWORD_PTR, HexConst(0x00000007))
 let tag_func           = Sized(DWORD_PTR, HexConst(0x00000005))
+let offset_func        = 0x5
 
 let err_COMP_NOT_NUM   = (Const(1), "__err_COMP_NOT_NUM__")
 let err_ARITH_NOT_NUM  = (Const(2), "__err_ARITH_NOT_NUM__")
@@ -292,47 +307,115 @@ let block_true_false label op = [
     ILabel(label);
 ]
 
-let rec compile_fun fun_name args e : (instruction list * instruction list * instruction list) =
-  let args_env = List.mapi (fun i a -> (a, RegOffset(word_size * (i + 2), EBP))) args in
-  let compiled = (compile_aexpr e 1 args_env (List.length args) true) in
-  let count_local_vars = count_vars e in
-  let optimized = optimize compiled in
-  (([
-       ILabel(fun_name);
-       ILineComment("Function prologue");
-       IPush(Reg(EBP));
-       IMov(Reg(EBP), Reg(ESP))
-     ]
-    @ replicate (IPush(Sized(DWORD_PTR, Const(0)))) count_local_vars),
-   ([ ILineComment("Function body") ]
-    @ [ ILabel(sprintf "%s_func_begin__" fun_name); ]
-    @ optimized),
-   [
-     ILineComment("Function epilogue");
-     IMov(Reg(ESP), Reg(EBP));
-     IPop(Reg(EBP));
-     IInstrComment(IRet, sprintf "End of %s" fun_name)
-  ])
+let rec print_str ls =
+    match ls with
+    | [] -> ()
+    | x::rs -> printf "%s | " x; print_str rs
+
+let rec rm_dup ls =
+    let rec rm_from ls x =
+        (match ls with
+        | [] -> []
+        | n::rs when n = x -> rm_from rs x
+        | _ -> List.hd ls :: rm_from (List.tl ls) x ) in
+    match ls with
+    | [] -> []
+    | x::rs ->
+        let new_ls = rm_from rs x in
+        x::rm_dup new_ls
+
+let rec free_a ae env =
+    match ae with
+    | ALet(name, expr, body, _) ->
+        free_c expr env @ free_a body (name::env)
+    | ALetRec(name, expr, body, _) ->
+        free_c expr env @ free_a body (name::env)
+    | ACExpr(e) ->
+        free_c e env
+and free_c ce env =
+    match ce with
+    | CIf(con, thn, els, _) ->
+        free_i con env @
+        free_a thn env @
+        free_a els env
+    | CPrim1(_, e, _) ->
+        free_i e env
+    | CPrim2(_, e1, e2, _) ->
+        free_i e1 env @
+        free_i e2 env
+    | CApp(func, args, _) ->
+        free_i func env @
+        List.flatten (List.map (fun x -> free_i x env) args)
+    | CTuple(args, _) ->
+        List.flatten (List.map (fun x -> free_i x env) args)
+    | CGetItem(tup, idx, _) ->
+        free_i tup env @ free_i idx env
+    | CLambda(args, expr, _) ->
+        free_a expr args
+    | CImmExpr(i) ->
+        free_i i env
+and free_i ie env =
+    match ie with
+    | ImmNum _ | ImmBool _ -> []
+    | ImmId(x, _) ->
+        (try ignore (List.find (fun s -> s = x) env); [] with Not_found -> [x])
+
+let free_vars ae = rm_dup (free_a ae [])
+
+let rec compile_fun fun_name env e offset : (instruction list * instruction list * instruction list) =
+    let compiled = (compile_aexpr e (offset + 1) env (List.length env - offset) true) in
+    let count_local_vars = count_vars e in
+    let optimized = optimize compiled in
+    (([
+        ILabel(fun_name);
+        ILineComment("Function prologue");
+        IPush(Reg(EBP));
+        IMov(Reg(EBP), Reg(ESP)) ]
+        @ replicate (IPush(Sized(DWORD_PTR, Const(0)))) count_local_vars),
+        ( [ ILabel(label_func_begin fun_name);
+            ILineComment("Function body") ]
+        @ optimized), [
+        ILineComment("Function epilogue");
+        IMov(Reg(ESP), Reg(EBP));
+        IPop(Reg(EBP));
+        IInstrComment(IRet, sprintf "End of %s" fun_name)
+    ])
 and compile_aexpr e si env num_args is_tail =
     match e with
     (* TODO: This is no different from ELet *)
     | ALetRec(name, exp, body, _) ->
-        let setup = compile_cexpr exp si env num_args false in
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
+        (*print_env new_env "letrec";*)
+        (*printf "------------------\n";*)
+        let setup = compile_cexpr exp (si+1) new_env num_args false in
         let main = compile_aexpr body (si+1) new_env num_args true in
-        let cmt = lambda_cmt exp name in
+        let cmt = comment exp name in
         cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
+        (*let setup = compile_cexpr exp si env num_args false in*)
+        (*let arg = RegOffset(~-si*word_size, EBP) in*)
+        (*let new_env = (name, arg)::env in*)
+        (*let main = compile_aexpr body (si+1) new_env num_args true in*)
+        (*let cmt = lambda_cmt exp name in*)
+        (*cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main*)
     | ALet(name, exp, body, _) ->
         let setup = compile_cexpr exp si env num_args false in
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
         let main = compile_aexpr body (si+1) new_env num_args true in
-        let cmt = lambda_cmt exp name in
+        let cmt = comment exp name in
         cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
+        (*let arg = RegOffset(~-si*word_size, EBP) in*)
+        (*let new_env = (name, arg)::env in*)
+        (*(*printf "--------------\n";*)*)
+        (*(*print_env new_env "let";*)*)
+        (*let setup = compile_cexpr exp (si+1) new_env num_args false in*)
+        (*(*printf "----SETUP-----\n";*)*)
+        (*let main = compile_aexpr body (si+1) new_env num_args true in*)
     | ACExpr(e) ->
         compile_cexpr e si env num_args true
 and compile_cexpr e si env num_args is_tail =
+    (*print_env env "cexp";*)
     match e with
     | CIf (cnd, thn, els, t) ->
         let label_false = sprintf "__if_%d_false__" t in
@@ -432,25 +515,84 @@ and compile_cexpr e si env num_args is_tail =
         ]
         )
     | CLambda(args, expr, t) ->
-        let func = sprintf "__lambda_%d__" t in
+        let free_ls = rm_dup (free_a expr args) in
+        let func_name = sprintf "__lambda_%d__" t in
         let label = sprintf "__lambda_%d_done__" t in
-        let (a, b, c) = compile_fun func args expr in
-        let main = a @ b @ c in
+        let mov_free_vars = [ ILineComment("Load free variables to heap"); ] @
+            List.flatten ( List.mapi
+            (fun i id -> [
+                IMov(Reg(EDX), compile_imm (ImmId(id, 0)) env);
+                IMov(RegOffset((i+2)*word_size, ESI), Reg(EDX)); ])
+            free_ls ) in
+        let heap_size =
+            let size = List.length free_ls + 2 in
+            if size mod 2 = 0 then size
+            else size + 1 in
         let setup = [
+            IMov(Sized(DWORD_PTR, RegOffset(0, ESI)), Const(List.length args));
+            IMov(Sized(DWORD_PTR, RegOffset(word_size, ESI)), Label(func_name));
+        ] @ mov_free_vars @ [
             IMov(Reg(EAX), Reg(ESI));
             IOr(Reg(EAX), tag_func);
-            IMov(Sized(DWORD_PTR, RegOffset(0, ESI)), Const(List.length args));
-            IMov(Sized(DWORD_PTR, RegOffset(word_size, ESI)), Label(func));
-            IAdd(Reg(ESI), Const(word_size * 2));
-            (* TODO: Add paddings once have free vars *)
+            IAdd(Reg(ESI), Const(word_size * heap_size));
             IJmp(label);
         ] in
+        let func_env =
+            List.mapi (fun i id -> (id, RegOffset(word_size*(i+2), EBP))) args @
+            List.mapi (fun i id -> (id, RegOffset(word_size*(~-(i+1)), EBP))) free_ls in
+        let (prologue, body, epilogue) = compile_fun func_name func_env expr (List.length free_ls) in
+        let reload = [
+            ILineComment("Reload free variables from heap");
+            IMov(Reg(ECX), RegOffset(word_size*(List.length args+2), EBP));
+        ] @ List.flatten (List.mapi
+            (fun i id -> [
+                IMov(Reg(EDX), RegOffset(word_size*(i+2)-offset_func, ECX));
+                IMov(RegOffset(word_size*(~-(i+1)), EBP), Reg(EDX));
+            ])
+            free_ls ) in
+        let main = prologue @ reload @ body @ epilogue in
         let post = [ ILabel(label); ] in
         setup @ main @ post
         (* TODO: Implement free variables support *)
         (*failwith "Implement pls"*)
     | CApp(func, args, _) ->
-        call func args env
+        let isfunc = [
+            IMov(Reg(EAX), compile_imm func env);
+            IAnd(Reg(EAX), tag_3_bit);
+            ICmp(Reg(EAX), tag_func);
+            (* TODO: Insert correct error *)
+            IJne(snd err_COMP_NOT_NUM);
+        ] in let arity = [
+            IMov(Reg(EAX), compile_imm func env);
+            (*ISub(Reg(EAX), tag_func);*)
+            IMov(Reg(EBX), RegOffset(~-offset_func, EAX));
+            ICmp(Reg(EBX), Const(List.length args));
+            (* TODO: Insert correct error *)
+            IJne(snd err_ARITH_NOT_NUM);
+        ] in
+        (*if is_tail && (num_args = List.length args) then*)
+            (*let setup = List.flatten (List.mapi*)
+              (*(fun i a -> [ IMov(Reg(EAX), a); IMov(RegOffset(word_size*(i+2), EBP), Reg(EAX)); ])*)
+              (*(List.rev_map (fun a -> compile_imm a env) args)) in*)
+            (*let call = [  IInstrComment(IJmp(label_func_begin (id_name func)), "Tail-call") ] in*)
+            (*isfunc @ arity @ setup @ call*)
+        (*else*)
+        (*let setup = [ IPush(Sized(DWORD_PTR, RegOffset(0, EAX)));] @*)
+        let setup = [ IPush(Reg(EAX)); ] @
+            List.map
+            (fun arg -> IPush(Sized(DWORD_PTR, arg)))
+            (List.map (fun x -> compile_imm x env) args) in
+        let call = [
+            IMov(Reg(ECX), RegOffset(word_size-offset_func, EAX));
+            ICall("ECX");
+        ] in
+        let teardown =
+            let len = (List.length args + 1) in
+            (*let len = List.length args in*)
+            if len = 0 then []
+            else [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop %d arguments" len) ] in
+        [ ILineComment(sprintf "Function %s call" (id_name func)) ;] @
+        isfunc @ arity @ setup @ call @ teardown
     | CImmExpr(e) ->
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
@@ -496,38 +638,38 @@ and id_name e =
     match e with
     | ImmId(x, _) -> x
     | _ -> failwith "Not a variable!"
-and lambda_cmt e s =
+and comment e s =
     match e with
     | CLambda _ -> [ ILineComment(sprintf "Function/Lambda: %s" s); ]
     | _ -> []
-and call func args env =
-    let isfunc = [
-        IMov(Reg(EAX), compile_imm func env);
-        IAnd(Reg(EAX), tag_3_bit);
-        ICmp(Reg(EAX), tag_func);
-        (* TODO: Insert correct error *)
-        IJne(snd err_COMP_NOT_NUM);
-    ] in let arity = [
-        IMov(Reg(EAX), compile_imm func env);
-        ISub(Reg(EAX), tag_func);
-        IMov(Reg(EBX), RegOffset(0, EAX));
-        ICmp(Reg(EBX), Const(List.length args));
-        (* TODO: Insert correct error *)
-        IJne(snd err_ARITH_NOT_NUM);
-    ] in
-    let setup = List.map
-        (fun arg -> IPush(Sized(DWORD_PTR, arg)))
-        (List.map (fun x -> compile_imm x env) args) in
-    let call = [
-        IMov(Reg(ECX), RegOffset(word_size, EAX));
-        ICall("ECX");
-    ] in
-    let teardown =
-        let len = List.length args in
-            if len = 0 then []
-            else [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop%d arguments" len) ] in
-    [ ILineComment(sprintf "Function %s call" (id_name func)) ;] @
-    isfunc @ arity @ setup @ call @ teardown
+(*and call func args env =*)
+    (*let isfunc = [*)
+        (*IMov(Reg(EAX), compile_imm func env);*)
+        (*IAnd(Reg(EAX), tag_3_bit);*)
+        (*ICmp(Reg(EAX), tag_func);*)
+        (*(* TODO: Insert correct error *)*)
+        (*IJne(snd err_COMP_NOT_NUM);*)
+    (*] in let arity = [*)
+        (*IMov(Reg(EAX), compile_imm func env);*)
+        (*ISub(Reg(EAX), tag_func);*)
+        (*IMov(Reg(EBX), RegOffset(0, EAX));*)
+        (*ICmp(Reg(EBX), Const(List.length args));*)
+        (*(* TODO: Insert correct error *)*)
+        (*IJne(snd err_ARITH_NOT_NUM);*)
+    (*] in*)
+    (*let setup = List.map*)
+        (*(fun arg -> IPush(Sized(DWORD_PTR, arg)))*)
+        (*(List.map (fun x -> compile_imm x env) args) in*)
+    (*let call = [*)
+        (*IMov(Reg(ECX), RegOffset(word_size, EAX));*)
+        (*ICall("ECX");*)
+    (*] in*)
+    (*let teardown =*)
+        (*let len = List.length args in*)
+            (*if len = 0 then []*)
+            (*else [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop %d arguments" len) ] in*)
+    (*[ ILineComment(sprintf "Function %s call" (id_name func)) ;] @*)
+    (*isfunc @ arity @ setup @ call @ teardown*)
 
   (*let setup = List.map (fun arg -> IPush(Sized(DWORD_PTR, arg))) args in*)
 
@@ -572,7 +714,7 @@ global our_code_starts_here" in
             call err_INDEX_LARGE;
             call err_INDEX_SMALL;
         ]) in
-    let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed in
+    let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed 0 in
     let heap_start = [
         ILineComment("heap start");
         IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");

@@ -16,15 +16,15 @@ let te name program expected_err = name>::test_err program name expected_err;;
 
 let tvg name program expected = name>::test_run_valgrind program name expected;;
 
-(*let tfvs name program expected = name>::*)
-  (*(fun _ ->*)
-    (*let ast = parse_string name program in*)
-    (*let anfed = anf (tag ast) in*)
-    (*let vars = free_vars anfed in*)
-    (*let c = Pervasives.compare in*)
-    (*let str_list_print strs = "[" ^ (ExtString.String.join ", " strs) ^ "]" in*)
-    (*assert_equal (List.sort c vars) (List.sort c expected) ~printer:str_list_print)*)
-(*;;*)
+let tfvs name program expected = name>::
+  (fun _ ->
+    let ast = parse_string name program in
+    let anfed = anf (tag ast) in
+    let vars = free_vars anfed in
+    let c = Pervasives.compare in
+    let str_list_print strs = "[" ^ (ExtString.String.join ", " strs) ^ "]" in
+    assert_equal (List.sort c vars) (List.sort c expected) ~printer:str_list_print)
+;;
 
 (*let tanf name program expected = name>::fun _ ->*)
   (*assert_equal expected (anf (tag program)) ~printer:string_of_aprogram;;*)
@@ -43,6 +43,10 @@ let tests = [
   t "comp_2" "if (5 < 7): true else: false" "true";
   t "comp_3" "if (5 == 7): true else: false" "false";
   t "comp_4" "if (5 == 5): true else: false" "true";
+
+  t "let_1" "let x = 5 in let y = 4 in let z = 3 in x + y + z" "12";
+
+  (*tfvs "tf1" "let x = 10 in let f = (lambda y: x + y) in f(10)" ["dit"];*)
 
   t "m1" "5 - 5" "0";
   t "m2" "5 + 5" "10";
@@ -72,6 +76,13 @@ let tests = [
           h = (lambda x,y: 2*x+y),
           j = (lambda x: x*x) in
           j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
+  t "f5" "let f = (lambda x: if x==1: x else: 0) in f(4)" "0";
+  t "f6" "let f = (lambda x: if x==1: x else: 1) in f(1)" "1";
+  (*t "f8" "def f(x): (if x==0: 1 else: (x * f(x - 1))) f(6)" "720";*)
+  (*t "f9" "def f(x): (if x==0: 0 else: (x + f(x - 1))) f(24)" "300";*)
+  t "f10" "let f = (lambda: 5) in f()" "5";
+
+  (*t "f_tail_1" "let rec f = (lambda x, a: if x==1: a else: f(x - 1, a * x)) in f(6, 1)" "720";*)
 
   t "tup_1" "let x = (3, 4, 5, 6) in x[0]" "3";
   t "tup_2" "let x = (3, 4, 5, 6) in x[1]" "4";
@@ -131,8 +142,14 @@ let tests = [
 
 ]
 
+let dut = [
+  t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
+  t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
+  t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
+]
+
 let suite =
-"suite">:::tests
+"suite">:::dut
 
 let () =
   run_test_tt_main suite
