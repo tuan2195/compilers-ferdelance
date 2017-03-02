@@ -78,12 +78,16 @@ let tests = [
           j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
   t "f5" "let f = (lambda x: if x==1: x else: 0) in f(4)" "0";
   t "f6" "let f = (lambda x: if x==1: x else: 1) in f(1)" "1";
-  (*t "f8" "def f(x): (if x==0: 1 else: (x * f(x - 1))) f(6)" "720";*)
-  (*t "f9" "def f(x): (if x==0: 0 else: (x + f(x - 1))) f(24)" "300";*)
+  t "f9" "let rec f = (lambda x: if x==0: 0 else: (x + f(x - 1))) in f(24)" "300";
   t "f10" "let f = (lambda: 5) in f()" "5";
 
-  (*t "f_tail_1" "let rec f = (lambda x, a: if x==1: a else: f(x - 1, a * x)) in f(6, 1)" "720";*)
+  t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
+  t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
+  t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
+  t "f_tail_1" "let rec f = (lambda x, a: if x==1: a else: f(x - 1, a * x)) in f(6, 1)" "720";
 
+  te "e_lam_1" "let x = 10 in let f = (lambda y: x + y) in x(10)" "10";
+  te "e_lam_2" "let x = 10 in let f = (lambda y: x + y) in f(10, 10)" "11";
   t "tup_1" "let x = (3, 4, 5, 6) in x[0]" "3";
   t "tup_2" "let x = (3, 4, 5, 6) in x[1]" "4";
   t "tup_3" "let x = (3, 4, 5, 6) in x[2]" "5";
@@ -143,15 +147,10 @@ let tests = [
 ]
 
 let dut = [
-  t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
-  t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
-  t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
-  te "e_lam_1" "let x = 10 in let f = (lambda y: x + y) in x(10)" "10";
-  te "e_lam_2" "let x = 10 in let f = (lambda y: x + y) in f(10, 10)" "11";
 ]
 
 let suite =
-"suite">:::dut
+"suite">:::tests
 
 let () =
   run_test_tt_main suite
