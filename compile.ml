@@ -456,6 +456,14 @@ let count_vars e =
     | _ -> 0
   in helpA e + List.length (free_vars e)
 
+let lambda_heap_size e =
+    match e with
+    | CLambda(args, expr, t) ->
+        let size = (List.length (rm_dup (free_a expr args)) + 2) in
+        if size mod 2 = 0 then size
+        else size + 1
+    | _ -> failwith "Not a lambda!"
+
 let rec replicate x i =
   if i = 0 then []
   else x :: (replicate x (i - 1))
@@ -482,27 +490,46 @@ and compile_aexpr e si env num_args is_tail =
     match e with
     (* TODO: This is no different from ELet *)
     | ALetRec(name, lambda, body, _) ->
-        let rec rec_env e si env =
-            match e with
-            | ALetRec(name, _, body, _) ->
-                (try ignore (List.assoc name env);
-                    rec_env body si env
-                with Not_found ->
-                    let (new_env, new_si) = rec_env body (si+1) env in
-                    ((name, RegOffset(word_size*(~-si), EBP))::new_env, new_si))
-            | _ -> ([], si) in
-        let (new_env, new_si) = rec_env e si env in
-        (*print_env new_env "rec";*)
-        let preload = [
-            ILineComment(sprintf "Preload function %s" name);
-            IMov(Reg(EDX), Reg(ESI));
-            IOr(Reg(EDX), tag_func);
-            IMov(find new_env name, Reg(EDX));
-        ] in
-        let func = compile_cexpr lambda new_si (new_env @ env) num_args false in
-        let main = compile_aexpr body new_si (new_env @ env) num_args true in
+        let (env, si, preload) =
+            try ignore (List.assoc name env);
+                (env, si, [])
+            with Not_found ->
+                let rec rec_env e si env heap =
+                    match e with
+                    | ALetRec(name, func, body, _) ->
+                        let (new_env, new_si) = rec_env body (si+1) env (heap + lambda_heap_size func) in
+                        (((name, RegOffset(word_size*(~-si), EBP)), heap)::new_env, new_si)
+                    | _ -> ([], si) in
+                let (new_env_and_offset, new_si) = rec_env e si env 0 in
+                let new_env = List.map fst new_env_and_offset in
+                let preload = List.flatten (List.map
+                (fun x  -> [
+                    ILineComment(sprintf "Preload function %s" (fst (fst x)));
+                    IMov(Reg(EDX), Reg(ESI));
+                    IAdd(Reg(EDX), Const(word_size*(snd x) + offset_func));
+                    IMov(find new_env (fst (fst x)), Reg(EDX)); ])
+                new_env_and_offset) in
+                (new_env @ env, new_si, preload) in
+        (*let rec rec_env e si env =*)
+            (*match e with*)
+            (*| ALetRec(name, _, body, _) ->*)
+                (*(try ignore (List.assoc name env);*)
+                    (*rec_env body si env*)
+                (*with Not_found ->*)
+                    (*let (new_env, new_si) = rec_env body (si+1) env in*)
+                    (*((name, RegOffset(word_size*(~-si), EBP))::new_env, new_si))*)
+            (*| _ -> ([], si) in*)
+        (*let (new_env, new_si) = rec_env e si env in*)
+        (*let preload = [*)
+            (*ILineComment(sprintf "Preload function %s" name);*)
+            (*IMov(Reg(EDX), Reg(ESI));*)
+            (*IOr(Reg(EDX), tag_func);*)
+            (*IMov(find new_env name, Reg(EDX));*)
+        (*] in*)
+        let func = compile_cexpr lambda si env num_args false in
+        let main = compile_aexpr body si env num_args true in
         let cmt = comment lambda name in
-        cmt @ preload @ func @ main
+        preload @ cmt @ func @ main
     | ALet(name, expr, body, _) ->
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
@@ -682,8 +709,7 @@ and compile_cexpr e si env num_args is_tail =
         let teardown =
             let len = (List.length args + 1) in
             [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop %d arguments" len) ] in
-        let cmt = comment e "" in
-        cmt @ tests @ setup @ call @ teardown
+        tests @ setup @ call @ teardown
     | CImmExpr(e) ->
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
@@ -734,16 +760,24 @@ and comment e s =
     | CLambda _ -> [ ILineComment(sprintf "Function/Lambda: %s" s); ]
     | CApp(func, _, _) -> [ ILineComment(sprintf "Function/Lambda call: %s" (id_name func)) ;]
     | _ -> []
-and optimize ls =
+and strip ls =
     match ls with
     | [] -> []
-    | IMov(RegOffset(o1, b1), Reg(r1))::IMov(Reg(r2), RegOffset(o2, b2))::rest ->
-        if o1 = o2 && b1 = b2 && r1 = r2 then
-            (List.hd ls)::optimize rest
-        else
-            (List.hd ls)::optimize (List.tl ls)
-    | what::rest ->
-        what::optimize rest
+    | ILineComment(_)::rest -> strip rest
+    | IInstrComment(i, _)::rest -> i::strip rest
+    | i::rest -> i::strip rest
+and optimize ls =
+    let rec opt ls =
+        match ls with
+        | [] -> []
+        | IMov(RegOffset(o1, b1), Reg(r1))::IMov(Reg(r2), RegOffset(o2, b2))::rest ->
+            if o1 = o2 && b1 = b2 && r1 = r2 then
+                (List.hd ls)::opt rest
+            else
+                (List.hd ls)::opt (List.tl ls)
+        | what::rest ->
+            what::opt rest in
+    opt (strip ls)
 ;;
 
 let compile_prog anfed =
@@ -777,8 +811,8 @@ global our_code_starts_here" in
         IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");
         IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")
     ] in
-    let main = (prologue @ heap_start @ comp_main @ epilogue) in
-    sprintf "%s\n%s\n%s\n" prelude (to_asm main) suffix
+    let main = strip (prologue @ heap_start @ comp_main @ epilogue) in
+    sprintf "%s%s%s" prelude (to_asm main) suffix
 
 let compile_to_string prog : (exn list, string) either =
     (*let ext_funcs = [DExt("print", 1); DExt("input", 0)] in*)

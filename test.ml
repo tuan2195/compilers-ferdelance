@@ -43,10 +43,7 @@ let tests = [
   t "comp_2" "if (5 < 7): true else: false" "true";
   t "comp_3" "if (5 == 7): true else: false" "false";
   t "comp_4" "if (5 == 5): true else: false" "true";
-
   t "let_1" "let x = 5 in let y = 4 in let z = 3 in x + y + z" "12";
-
-  (*tfvs "tf1" "let x = 10 in let f = (lambda y: x + y) in f(10)" ["dit"];*)
 
   t "m1" "5 - 5" "0";
   t "m2" "5 + 5" "10";
@@ -78,13 +75,41 @@ let tests = [
           j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
   t "f5" "let f = (lambda x: if x==1: x else: 0) in f(4)" "0";
   t "f6" "let f = (lambda x: if x==1: x else: 1) in f(1)" "1";
-  t "f9" "let rec f = (lambda x: if x==0: 0 else: (x + f(x - 1))) in f(24)" "300";
+  t "f7" "let rec f = (lambda x: if x==0: 0 else: (x + f(x - 1))) in f(24)" "300";
+  t "f8" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))) in f(6)" "720";
+  t "f9" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))) in f(10)" "3628800";
   t "f10" "let f = (lambda: 5) in f()" "5";
+
+  t "rec1" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))),
+                  g = (lambda x: x + x) in f(g(3))" "720";
+  t "rec2" "let rec f = (lambda x,y,z: x*y+z),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y) in
+          f(g(3,4),g(2,2),h(5,9))" "47";
+  t "rec3" "let rec f = (lambda x,y,z,t: x*y+z*t),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y),
+          j = (lambda x: x*x) in
+          j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
+  t "rec4" "let rec f = (lambda x, a: if x==1: a else: g(x - 1, a * x)),
+            g = (lambda x, a: if x==1: a+1 else: f(x - 1, a + x)) in f(16, 1)" "20643839";
 
   t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
   t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
   t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
-  t "f_tail_1" "let rec f = (lambda x, a: if x==1: a else: f(x - 1, a * x)) in f(6, 1)" "720";
+
+  t "ll_1" "let rec length = (lambda l: length_rec(l, 0)),
+            length_rec = (lambda l, acc: if l == false: acc else: length_rec(l[1], acc + 1)) in
+            length((0, (1, (2, (3, (4, (5, (6, (7, (8, (9, false)))))))))))"
+            "10";
+  t "ll_2" "let rec sum = (lambda l: sum_rec(l, 0)),
+            sum_rec = (lambda l, acc: if l == false: acc else: sum_rec(l[1], acc + l[0])) in
+            sum((0, (1, (2, (3, (4, (5, (6, (7, (8, (9, false)))))))))))"
+            "45";
+  t "ll_3" "let rec reverse = (lambda l: reverse_rec(l, false)),
+            reverse_rec = (lambda l, prev: if l[1] == false: (l[0], prev) else: reverse_rec(l[1], (l[0], prev))) in
+            reverse((0, (1, (2, (3, (4, (5, (6, (7, (8, (9, false)))))))))))"
+            "(9, (8, (7, (6, (5, (4, (3, (2, (1, (0, false))))))))))";
 
   te "e_lam_1" "let x = 10 in let f = (lambda y: x + y) in x(10)" "10";
   te "e_lam_2" "let x = 10 in let f = (lambda y: x + y) in f(10, 10)" "11";
@@ -125,7 +150,7 @@ let tests = [
   te "logic_bool_3" "5 || 5" "3";
   te "if_num" "if 5 : 5 else: 10" "4";
   te "ovf_1" "999999999 * 999999999" "5";
-  (*te "ovf_2" "def f(x, a): (if x==1: a else: f(x - 1, a * x)) f(99, 1)" "5";*)
+  te "ovf_2" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))) in f(100)" "5";
   te "e_tup_1" "let x = 5 in x[1]" "6";
   te "e_tup_2" "let x = (1, 2) in x[false]" "7";
   te "e_tup_3" "let x = (1, 2) in x[2]" "8";
