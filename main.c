@@ -14,17 +14,17 @@ const int TUPLE_TAG_MASK = 0x00000007;
 const int BOOL_TRUE      = 0xFFFFFFFF;
 const int BOOL_FALSE     = 0x7FFFFFFF;
 
-
-
-const int ERR_COMP_NOT_NUM   = 1;
-const int ERR_ARITH_NOT_NUM  = 2;
-const int ERR_LOGIC_NOT_BOOL = 3;
-const int ERR_IF_NOT_BOOL    = 4;
-const int ERR_OVERFLOW       = 5;
-const int ERR_GET_NOT_TUPLE  = 6;
-const int ERR_GET_LOW_INDEX  = 7;
-const int ERR_GET_HIGH_INDEX = 8;
-const int ERR_INDEX_NOT_NUM  = 9;
+const int ERR_COMP_NOT_NUM   =  1;
+const int ERR_ARITH_NOT_NUM  =  2;
+const int ERR_LOGIC_NOT_BOOL =  3;
+const int ERR_IF_NOT_BOOL    =  4;
+const int ERR_OVERFLOW       =  5;
+const int ERR_GET_NOT_TUPLE  =  6;
+const int ERR_GET_LOW_INDEX  =  7;
+const int ERR_GET_HIGH_INDEX =  8;
+const int ERR_INDEX_NOT_NUM  =  9;
+const int ERR_NOT_LAMBDA     = 10;
+const int ERR_WRONG_ARITY    = 11;
 
 
 int printRaw(int val) {
@@ -49,20 +49,6 @@ int equal(int a, int b)
 
     return BOOL_TRUE;
 }
-/*int equal(int val1, int val2) {*/
-  /*if (val1 == val2) { return BOOL_TRUE; }*/
-  /*if ((val1 & TUPLE_TAG_MASK) != 0 && (val2 & TUPLE_TAG_MASK) != 0) {*/
-    /*int *tup1 = (int*)(val1 - 1);*/
-    /*int *tup2 = (int*)(val2 - 1);*/
-    /*if (tup1[0] != tup2[0]) { return BOOL_FALSE; }*/
-    /*for (int i = 1; i <= tup1[0]; i++) {*/
-      /*if (equal(tup1[i], tup2[i]) == BOOL_FALSE)*/
-        /*return BOOL_FALSE;*/
-    /*}*/
-    /*return BOOL_TRUE;*/
-  /*}*/
-  /*return BOOL_FALSE;*/
-/*}*/
 
 void printHelp(FILE *out, int val) {
   if((val & NUM_TAG_MASK) == 0) {
@@ -130,13 +116,13 @@ void error(int i) {
     fprintf(stderr, "Error: arithmetic expected a number\n");
     break;
   case ERR_LOGIC_NOT_BOOL:
-    fprintf(stderr, "Error logic expected a boolean\n");
+    fprintf(stderr, "Error: logic expected a boolean\n");
     break;
   case ERR_IF_NOT_BOOL:
     fprintf(stderr, "Error: if expected a boolean\n");
     break;
   case ERR_OVERFLOW:
-    fprintf(stderr, "Error: Integer overflow\n");
+    fprintf(stderr, "Error: integer overflow\n");
     break;
   case ERR_GET_NOT_TUPLE:
     fprintf(stderr, "Error: get expected tuple\n");
@@ -150,8 +136,14 @@ void error(int i) {
   case ERR_INDEX_NOT_NUM:
     fprintf(stderr, "Error: get expected numer for index\n");
     break;
+  case ERR_NOT_LAMBDA:
+    fprintf(stderr, "Error: application expected a lambda/function\n");
+    break;
+  case ERR_WRONG_ARITY:
+    fprintf(stderr, "Error: wrong arity for lambda/function\n");
+    break;
   default:
-    fprintf(stderr, "Error: Unknown error code: %d\n", i);
+    fprintf(stderr, "Error: unknown error code: %d\n", i);
   }
   exit(i);
 }

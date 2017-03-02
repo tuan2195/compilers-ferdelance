@@ -146,6 +146,8 @@ let dut = [
   t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
   t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
   t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
+  te "e_lam_1" "let x = 10 in let f = (lambda y: x + y) in x(10)" "10";
+  te "e_lam_2" "let x = 10 in let f = (lambda y: x + y) in f(10, 10)" "11";
 ]
 
 let suite =

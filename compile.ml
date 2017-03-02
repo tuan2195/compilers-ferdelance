@@ -28,19 +28,12 @@ let rec find ls x =
   | (y,v)::rest ->
      if y = x then v else find rest x
 
-(*let rec find_true env x =*)
-    (*match env with*)
-    (*| [] -> false*)
-    (*| (n, _)::rest when n = x -> true*)
-    (*| _ -> find_true (List.tl env) x*)
-
 let rec print_env e cmt =
     match e with
     | [] -> ()
     | (x, _)::rest -> printf "%s: %s\n" cmt x; print_env rest cmt
 
-let well_formed (p : (Lexing.position * Lexing.position) program) : exn list =
-        (* TODO: Free vars and shit *)
+let well_formed p =
 let rec wf_E e (env : sourcespan envt) =
     let rec dupe x binds =
         match binds with
@@ -118,7 +111,7 @@ let rec wf_E e (env : sourcespan envt) =
         (process_args args) @ (wf_E body (args @ env))
 in wf_E p []
 
-(* TODO: Free vars and shit *)
+(* TODO: LetRec recursion *)
 let anf (p : tag program) : unit aprogram =
 let rec helpC (e : tag expr) : (unit cexpr * (string * unit cexpr) list) =
     match e with
@@ -205,9 +198,6 @@ and helpI (e : tag expr) : (unit immexpr * (string * unit cexpr) list) =
 and helpA e : unit aexpr =
     let (ans, ans_setup) = helpC e in
     List.fold_right (fun (bind, exp) body -> ALet(bind, exp, body, ())) ans_setup (ACExpr ans)
-(*and helpArec e : unit aexpr =*)
-    (*let (ans, ans_setup) = helpC e in*)
-    (*List.fold_right (fun (bind, exp) body -> ALetRec(bind, exp, body, ())) ans_setup (ACExpr ans)*)
 and help_foldI expr_ls = List.fold_left
     (fun (prev_ans, prev_setup) expr ->
         let (ans, setup) = helpI expr in
@@ -246,15 +236,17 @@ let tag_3_bit          = Sized(DWORD_PTR, HexConst(0x00000007))
 let tag_func           = Sized(DWORD_PTR, HexConst(0x00000005))
 let offset_func        = 0x5
 
-let err_COMP_NOT_NUM   = (Const(1), "__err_COMP_NOT_NUM__")
-let err_ARITH_NOT_NUM  = (Const(2), "__err_ARITH_NOT_NUM__")
-let err_LOGIC_NOT_BOOL = (Const(3), "__err_LOGIC_NOT_BOOL__")
-let err_IF_NOT_BOOL    = (Const(4), "__err_IF_NOT_BOOL__")
-let err_OVERFLOW       = (Const(5), "__err_OVERFLOW__")
-let err_NOT_TUPLE      = (Const(6), "__err_NOT_TUPLE__")
-let err_INDEX_NOT_NUM  = (Const(7), "__err_INDEX_NOT_NUM__")
-let err_INDEX_LARGE    = (Const(8), "__err_INDEX_LARGE__")
-let err_INDEX_SMALL    = (Const(9), "__err_INDEX_SMALL__")
+let err_COMP_NOT_NUM   = (Const(01), "__err_COMP_NOT_NUM__")
+let err_ARITH_NOT_NUM  = (Const(02), "__err_ARITH_NOT_NUM__")
+let err_LOGIC_NOT_BOOL = (Const(03), "__err_LOGIC_NOT_BOOL__")
+let err_IF_NOT_BOOL    = (Const(04), "__err_IF_NOT_BOOL__")
+let err_OVERFLOW       = (Const(05), "__err_OVERFLOW__")
+let err_NOT_TUPLE      = (Const(06), "__err_NOT_TUPLE__")
+let err_INDEX_NOT_NUM  = (Const(07), "__err_INDEX_NOT_NUM__")
+let err_INDEX_LARGE    = (Const(08), "__err_INDEX_LARGE__")
+let err_INDEX_SMALL    = (Const(09), "__err_INDEX_SMALL__")
+let err_NOT_LAMBDA     = (Const(10), "__err_NOT_LAMBDA__")
+let err_WRONG_ARITY    = (Const(11), "__err_WRONG_ARITY__")
 
 let label_func_begin name = sprintf "%s_func_begin__" name
 
@@ -362,7 +354,7 @@ and free_i ie env =
 
 let free_vars ae = rm_dup (free_a ae [])
 
-let rec compile_fun fun_name env e offset : (instruction list * instruction list * instruction list) =
+let rec compile_fun fun_name env e offset =
     let compiled = (compile_aexpr e (offset + 1) env (List.length env - offset) true) in
     let count_local_vars = count_vars e in
     let optimized = optimize compiled in
@@ -386,18 +378,10 @@ and compile_aexpr e si env num_args is_tail =
     | ALetRec(name, exp, body, _) ->
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
-        (*print_env new_env "letrec";*)
-        (*printf "------------------\n";*)
         let setup = compile_cexpr exp (si+1) new_env num_args false in
         let main = compile_aexpr body (si+1) new_env num_args true in
         let cmt = comment exp name in
         cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
-        (*let setup = compile_cexpr exp si env num_args false in*)
-        (*let arg = RegOffset(~-si*word_size, EBP) in*)
-        (*let new_env = (name, arg)::env in*)
-        (*let main = compile_aexpr body (si+1) new_env num_args true in*)
-        (*let cmt = lambda_cmt exp name in*)
-        (*cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main*)
     | ALet(name, exp, body, _) ->
         let setup = compile_cexpr exp si env num_args false in
         let arg = RegOffset(~-si*word_size, EBP) in
@@ -405,17 +389,9 @@ and compile_aexpr e si env num_args is_tail =
         let main = compile_aexpr body (si+1) new_env num_args true in
         let cmt = comment exp name in
         cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
-        (*let arg = RegOffset(~-si*word_size, EBP) in*)
-        (*let new_env = (name, arg)::env in*)
-        (*(*printf "--------------\n";*)*)
-        (*(*print_env new_env "let";*)*)
-        (*let setup = compile_cexpr exp (si+1) new_env num_args false in*)
-        (*(*printf "----SETUP-----\n";*)*)
-        (*let main = compile_aexpr body (si+1) new_env num_args true in*)
     | ACExpr(e) ->
         compile_cexpr e si env num_args true
 and compile_cexpr e si env num_args is_tail =
-    (*print_env env "cexp";*)
     match e with
     | CIf (cnd, thn, els, t) ->
         let label_false = sprintf "__if_%d_false__" t in
@@ -556,19 +532,15 @@ and compile_cexpr e si env num_args is_tail =
         (* TODO: Implement free variables support *)
         (*failwith "Implement pls"*)
     | CApp(func, args, _) ->
-        let isfunc = [
+        let tests = [
             IMov(Reg(EAX), compile_imm func env);
             IAnd(Reg(EAX), tag_3_bit);
             ICmp(Reg(EAX), tag_func);
-            (* TODO: Insert correct error *)
-            IJne(snd err_COMP_NOT_NUM);
-        ] in let arity = [
+            IJne(snd err_NOT_LAMBDA);
             IMov(Reg(EAX), compile_imm func env);
-            (*ISub(Reg(EAX), tag_func);*)
             IMov(Reg(EBX), RegOffset(~-offset_func, EAX));
             ICmp(Reg(EBX), Const(List.length args));
-            (* TODO: Insert correct error *)
-            IJne(snd err_ARITH_NOT_NUM);
+            IJne(snd err_WRONG_ARITY);
         ] in
         (*if is_tail && (num_args = List.length args) then*)
             (*let setup = List.flatten (List.mapi*)
@@ -583,16 +555,13 @@ and compile_cexpr e si env num_args is_tail =
             (fun arg -> IPush(Sized(DWORD_PTR, arg)))
             (List.map (fun x -> compile_imm x env) args) in
         let call = [
-            IMov(Reg(ECX), RegOffset(word_size-offset_func, EAX));
-            ICall("ECX");
+            IMov(Reg(EAX), RegOffset(word_size-offset_func, EAX));
+            ICall("EAX");
         ] in
         let teardown =
             let len = (List.length args + 1) in
-            (*let len = List.length args in*)
-            if len = 0 then []
-            else [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop %d arguments" len) ] in
-        [ ILineComment(sprintf "Function %s call" (id_name func)) ;] @
-        isfunc @ arity @ setup @ call @ teardown
+            [ IInstrComment(IAdd(Reg(ESP), Const(word_size * len)), sprintf "Pop %d arguments" len) ] in
+        comment e ""  @ tests @ setup @ call @ teardown
     | CImmExpr(e) ->
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
@@ -641,6 +610,7 @@ and id_name e =
 and comment e s =
     match e with
     | CLambda _ -> [ ILineComment(sprintf "Function/Lambda: %s" s); ]
+    | CApp (func, _, _) -> [ ILineComment(sprintf "Function/Lambda call: %s" (id_name func)) ;]
     | _ -> []
 (*and call func args env =*)
     (*let isfunc = [*)
@@ -713,6 +683,8 @@ global our_code_starts_here" in
             call err_INDEX_NOT_NUM;
             call err_INDEX_LARGE;
             call err_INDEX_SMALL;
+            call err_NOT_LAMBDA;
+            call err_WRONG_ARITY;
         ]) in
     let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed 0 in
     let heap_start = [
